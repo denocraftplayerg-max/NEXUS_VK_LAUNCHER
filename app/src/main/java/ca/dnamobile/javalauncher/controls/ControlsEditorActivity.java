@@ -20,6 +20,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -118,6 +119,7 @@ public final class ControlsEditorActivity extends AppCompatActivity {
         LinearLayout rowOne = panelRow();
         LinearLayout rowTwo = panelRow();
         LinearLayout rowThree = panelRow();
+        LinearLayout rowFour = panelRow();
 
         Button addKey = panelButton("Add Key");
         addKey.setOnClickListener(view -> {
@@ -164,17 +166,38 @@ public final class ControlsEditorActivity extends AppCompatActivity {
         });
         rowTwo.addView(save, panelButtonParams());
 
+        Button undo = panelButton("Undo");
+        undo.setOnClickListener(view -> {
+            if (overlay.undoLastChange()) {
+                Toast.makeText(this, "Undid last touch edit.", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, "Nothing to undo.", Toast.LENGTH_SHORT).show();
+            }
+        });
+        rowThree.addView(undo, panelButtonParams());
+
+        Button redo = panelButton("Redo");
+        redo.setOnClickListener(view -> {
+            if (overlay.redoLastChange()) {
+                Toast.makeText(this, "Redid touch edit.", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, "Nothing to redo.", Toast.LENGTH_SHORT).show();
+            }
+        });
+        rowThree.addView(redo, panelButtonParams());
+
         Button hide = panelButton("Hide panel");
         hide.setOnClickListener(view -> setPanelVisible(false));
-        rowThree.addView(hide, panelButtonParams());
+        rowFour.addView(hide, panelButtonParams());
 
         Button close = panelButton("Close");
         close.setOnClickListener(view -> finish());
-        rowThree.addView(close, panelButtonParams());
+        rowFour.addView(close, panelButtonParams());
 
         editorPanel.addView(rowOne);
         editorPanel.addView(rowTwo);
         editorPanel.addView(rowThree);
+        editorPanel.addView(rowFour);
     }
 
     private boolean handleMenuButtonTouch(View view, MotionEvent event) {
@@ -185,7 +208,7 @@ public final class ControlsEditorActivity extends AppCompatActivity {
                 menuStartX = menuButton.getX();
                 menuStartY = menuButton.getY();
                 menuDragging = false;
-                view.getParent().requestDisallowInterceptTouchEvent(true);
+                requestParentDisallowIntercept(view, true);
                 return true;
             case MotionEvent.ACTION_MOVE:
                 float dx = event.getRawX() - menuDownRawX;
@@ -198,7 +221,7 @@ public final class ControlsEditorActivity extends AppCompatActivity {
                 return true;
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
-                view.getParent().requestDisallowInterceptTouchEvent(false);
+                requestParentDisallowIntercept(view, false);
                 if (menuDragging) saveMenuButtonPosition();
                 else if (event.getActionMasked() == MotionEvent.ACTION_UP) {
                     view.performClick();
@@ -208,6 +231,13 @@ public final class ControlsEditorActivity extends AppCompatActivity {
                 return true;
             default:
                 return true;
+        }
+    }
+
+    private void requestParentDisallowIntercept(View view, boolean disallow) {
+        ViewParent parent = view == null ? null : view.getParent();
+        if (parent != null) {
+            parent.requestDisallowInterceptTouchEvent(disallow);
         }
     }
 

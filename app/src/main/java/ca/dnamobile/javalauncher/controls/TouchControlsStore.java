@@ -23,6 +23,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -103,16 +104,33 @@ public final class TouchControlsStore {
     @NonNull
     public static TouchControlsLayoutData loadLayout(@NonNull File file) {
         try {
-            String text = readText(file);
-            return TouchControlsLayoutData.fromJson(new JSONObject(text));
+            return readLayoutFromFile(file);
         } catch (Throwable throwable) {
             Logging.e(TAG, "Unable to read touch layout " + file.getAbsolutePath(), throwable);
+
+            File backup = backupFileFor(file);
+            if (backup.isFile()) {
+                try {
+                    TouchControlsLayoutData data = readLayoutFromFile(backup);
+                    Logging.i(TAG, "Recovered touch layout from backup: " + backup.getAbsolutePath());
+                    return data;
+                } catch (Throwable backupThrowable) {
+                    Logging.e(TAG, "Unable to read backup touch layout " + backup.getAbsolutePath(), backupThrowable);
+                }
+            }
+
             return TouchControlsLayoutData.defaultLayout();
         }
     }
 
     public static void saveLayout(@NonNull File file, @NonNull TouchControlsLayoutData data) throws Exception {
-        writeText(file, data.toJson().toString(2));
+        writeTextAtomically(file, data.toJson().toString(2));
+    }
+
+    @NonNull
+    private static TouchControlsLayoutData readLayoutFromFile(@NonNull File file) throws Exception {
+        String text = readText(file);
+        return TouchControlsLayoutData.fromJson(new JSONObject(text));
     }
 
     @NonNull
@@ -193,13 +211,84 @@ public final class TouchControlsStore {
         return builder.toString();
     }
 
-    private static void writeText(@NonNull File file, @NonNull String text) throws Exception {
+    private static void writeTextAtomically(@NonNull File file, @NonNull String text) throws Exception {
         File parent = file.getParentFile();
-        if (parent != null && !parent.exists()) //noinspection ResultOfMethodCallIgnored
-            parent.mkdirs();
-        try (FileOutputStream output = new FileOutputStream(file, false)) {
-            output.write(text.getBytes(StandardCharsets.UTF_8));
+        if (parent != null && !parent.exists() && !parent.mkdirs()) {
+            throw new IllegalStateException("Unable to create touch controls directory: " + parent.getAbsolutePath());
         }
+
+        File directory = parent != null ? parent : new File(".");
+        File temp = new File(directory, file.getName() + ".tmp");
+        File backup = backupFileFor(file);
+
+        writeText(temp, text);
+
+        if (file.isFile()) {
+            try {
+                copyFile(file, backup);
+            } catch (Throwable backupThrowable) {
+                Logging.e(TAG, "Unable to update touch layout backup " + backup.getAbsolutePath(), backupThrowable);
+            }
+        }
+
+        if (file.exists() && !file.delete()) {
+            // Some file systems refuse delete immediately after the copy. Fall back
+            // to overwriting the target after the temp file has been fully synced.
+            copyFile(temp, file);
+            //noinspection ResultOfMethodCallIgnored
+            temp.delete();
+            return;
+        }
+
+        if (!temp.renameTo(file)) {
+            copyFile(temp, file);
+            //noinspection ResultOfMethodCallIgnored
+            temp.delete();
+        }
+    }
+
+    private static void writeText(@NonNull File file, @NonNull String text) throws Exception {
+        try (FileOutputStream output = new FileOutputStream(file, false)) {
+            byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
+            output.write(bytes);
+            output.flush();
+            try {
+                output.getFD().sync();
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    private static void copyFile(@NonNull File source, @NonNull File target) throws Exception {
+        File parent = target.getParentFile();
+        if (parent != null && !parent.exists() && !parent.mkdirs()) {
+            throw new IllegalStateException("Unable to create touch controls directory: " + parent.getAbsolutePath());
+        }
+
+        try (FileInputStream input = new FileInputStream(source);
+             FileOutputStream output = new FileOutputStream(target, false)) {
+            copy(input, output);
+            output.flush();
+            try {
+                output.getFD().sync();
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    private static void copy(@NonNull InputStream input, @NonNull OutputStream output) throws Exception {
+        byte[] buffer = new byte[64 * 1024];
+        int read;
+        while ((read = input.read(buffer)) != -1) {
+            output.write(buffer, 0, read);
+        }
+    }
+
+    @NonNull
+    private static File backupFileFor(@NonNull File file) {
+        File parent = file.getParentFile();
+        File directory = parent != null ? parent : new File(".");
+        return new File(directory, file.getName() + ".bak");
     }
 
     @NonNull

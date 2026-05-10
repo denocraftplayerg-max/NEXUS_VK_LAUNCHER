@@ -58,9 +58,11 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import java.io.File;
+import java.util.ArrayDeque;
 import java.util.UUID;
 import java.util.Locale;
 
+import org.json.JSONObject;
 import org.lwjgl.glfw.CallbackBridge;
 
 import ca.dnamobile.javalauncher.feature.log.Logging;
@@ -79,6 +81,10 @@ public final class TouchControlsOverlay extends FrameLayout implements TouchCont
     }
 
     private static final String TAG = "TouchControlsOverlay";
+    private static final int MAX_EDIT_HISTORY = 4;
+
+    @NonNull private final ArrayDeque<String> undoHistory = new ArrayDeque<>();
+    @NonNull private final ArrayDeque<String> redoHistory = new ArrayDeque<>();
 
     private boolean editMode;
     private boolean controlsVisible = true;
@@ -284,6 +290,7 @@ public final class TouchControlsOverlay extends FrameLayout implements TouchCont
     public void loadSelectedLayout() {
         layoutFile = TouchControlsStore.getSelectedLayoutFile(getContext());
         layoutData = TouchControlsStore.loadLayout(layoutFile);
+        clearEditHistory();
         rebuildWhenSized();
     }
 
@@ -291,6 +298,7 @@ public final class TouchControlsOverlay extends FrameLayout implements TouchCont
         layoutFile = file;
         layoutData = TouchControlsStore.loadLayout(file);
         ControlsPreferences.setSelectedLayoutPath(getContext(), file.getAbsolutePath());
+        clearEditHistory();
         rebuildWhenSized();
     }
 
@@ -301,14 +309,90 @@ public final class TouchControlsOverlay extends FrameLayout implements TouchCont
             layoutFile = target;
         } catch (Throwable throwable) {
             Logging.e(TAG, "Unable to save touch controls", throwable);
-            Toast.makeText(getContext(), "Unable to save touch controls: " + throwable.getMessage(), Toast.LENGTH_LONG).show();
+            String message = throwable.getMessage();
+            if (message == null || message.trim().isEmpty()) {
+                message = throwable.getClass().getSimpleName();
+            }
+            Toast.makeText(getContext(), "Unable to save touch controls: " + message, Toast.LENGTH_LONG).show();
         }
     }
 
     public void addControl(@NonNull TouchControlData data) {
+        pushUndoSnapshot();
         layoutData.controls.add(data);
         saveLayout();
         rebuildWhenSized();
+    }
+
+    public boolean undoLastChange() {
+        if (undoHistory.isEmpty()) return false;
+        try {
+            String current = snapshotLayout();
+            String previous = undoHistory.removeLast();
+            pushBounded(redoHistory, current);
+            layoutData = TouchControlsLayoutData.fromJson(new JSONObject(previous));
+            saveLayout();
+            rebuildWhenSized();
+            return true;
+        } catch (Throwable throwable) {
+            Logging.e(TAG, "Unable to undo touch layout change", throwable);
+            return false;
+        }
+    }
+
+    public boolean redoLastChange() {
+        if (redoHistory.isEmpty()) return false;
+        try {
+            String current = snapshotLayout();
+            String next = redoHistory.removeLast();
+            pushBounded(undoHistory, current);
+            layoutData = TouchControlsLayoutData.fromJson(new JSONObject(next));
+            saveLayout();
+            rebuildWhenSized();
+            return true;
+        } catch (Throwable throwable) {
+            Logging.e(TAG, "Unable to redo touch layout change", throwable);
+            return false;
+        }
+    }
+
+    private void pushUndoSnapshot() {
+        pushUndoSnapshot(snapshotLayoutSafely());
+    }
+
+    private void pushUndoSnapshot(@Nullable String snapshot) {
+        if (snapshot == null || snapshot.trim().isEmpty()) return;
+        redoHistory.clear();
+        if (!undoHistory.isEmpty() && snapshot.equals(undoHistory.peekLast())) return;
+        pushBounded(undoHistory, snapshot);
+    }
+
+    private void pushBounded(@NonNull ArrayDeque<String> target, @NonNull String snapshot) {
+        if (!target.isEmpty() && snapshot.equals(target.peekLast())) return;
+        target.addLast(snapshot);
+        while (target.size() > MAX_EDIT_HISTORY) {
+            target.removeFirst();
+        }
+    }
+
+    @Nullable
+    private String snapshotLayoutSafely() {
+        try {
+            return snapshotLayout();
+        } catch (Throwable throwable) {
+            Logging.e(TAG, "Unable to snapshot touch layout", throwable);
+            return null;
+        }
+    }
+
+    @NonNull
+    private String snapshotLayout() throws Exception {
+        return layoutData.toJson().toString();
+    }
+
+    private void clearEditHistory() {
+        undoHistory.clear();
+        redoHistory.clear();
     }
 
     @NonNull
@@ -806,6 +890,11 @@ public final class TouchControlsOverlay extends FrameLayout implements TouchCont
     }
 
     @Override
+    public void onMoveStarted(@NonNull TouchControlButtonView view, @NonNull TouchControlData data) {
+        pushUndoSnapshot();
+    }
+
+    @Override
     public void onMoveRequested(
             @NonNull TouchControlButtonView view,
             @NonNull TouchControlData data,
@@ -824,11 +913,11 @@ public final class TouchControlsOverlay extends FrameLayout implements TouchCont
 
         view.setX(snapped[0]);
         view.setY(snapped[1]);
-        saveLayout();
     }
 
     @Override
     public void onEditRequested(@NonNull TouchControlButtonView view, @NonNull TouchControlData data) {
+        if (!isAttachedToWindow()) return;
         showEditDialog(view, data);
     }
 
@@ -846,10 +935,12 @@ public final class TouchControlsOverlay extends FrameLayout implements TouchCont
 
     @NonNull
     private float[] resolveDraggedPosition(@NonNull View movingView, float proposedX, float proposedY) {
-        int width = movingView.getWidth();
-        int height = movingView.getHeight();
-        float x = clamp(proposedX, 0f, Math.max(0, getWidth() - width));
-        float y = clamp(proposedY, 0f, Math.max(0, getHeight() - height));
+        int width = Math.max(1, movingView.getWidth());
+        int height = Math.max(1, movingView.getHeight());
+        float maxX = Math.max(0f, getWidth() - width);
+        float maxY = Math.max(0f, getHeight() - height);
+        float x = clamp(proposedX, 0f, maxX);
+        float y = clamp(proposedY, 0f, maxY);
 
         if (!ControlsPreferences.isSnapControlsEnabled(getContext())) {
             return new float[]{x, y};
@@ -861,20 +952,26 @@ public final class TouchControlsOverlay extends FrameLayout implements TouchCont
         float bestXDelta = threshold + 1f;
         float bestYDelta = threshold + 1f;
 
-        // Screen edges are useful snap targets too.
-        float[] screenXTargets = new float[]{0f, (getWidth() - width) / 2f, Math.max(0f, getWidth() - width)};
+        float[] screenXTargets = new float[]{0f, maxX / 2f, maxX};
         for (float target : screenXTargets) {
-            float delta = Math.abs(x - target);
-            if (delta <= threshold && delta < bestXDelta) {
-                bestX = target;
+            float candidateX = clamp(target, 0f, maxX);
+            float delta = Math.abs(x - candidateX);
+            if (delta <= threshold
+                    && delta < bestXDelta
+                    && !positionOverlapsAnotherControl(movingView, candidateX, bestY, width, height)) {
+                bestX = candidateX;
                 bestXDelta = delta;
             }
         }
-        float[] screenYTargets = new float[]{0f, (getHeight() - height) / 2f, Math.max(0f, getHeight() - height)};
+
+        float[] screenYTargets = new float[]{0f, maxY / 2f, maxY};
         for (float target : screenYTargets) {
-            float delta = Math.abs(y - target);
-            if (delta <= threshold && delta < bestYDelta) {
-                bestY = target;
+            float candidateY = clamp(target, 0f, maxY);
+            float delta = Math.abs(y - candidateY);
+            if (delta <= threshold
+                    && delta < bestYDelta
+                    && !positionOverlapsAnotherControl(movingView, bestX, candidateY, width, height)) {
+                bestY = candidateY;
                 bestYDelta = delta;
             }
         }
@@ -882,6 +979,8 @@ public final class TouchControlsOverlay extends FrameLayout implements TouchCont
         for (int i = 0; i < getChildCount(); i++) {
             View other = getChildAt(i);
             if (other == movingView || other.getVisibility() != VISIBLE) continue;
+            if (!(other instanceof TouchControlButtonView)) continue;
+            if (other.getWidth() <= 0 || other.getHeight() <= 0) continue;
 
             float otherLeft = other.getX();
             float otherTop = other.getY();
@@ -890,41 +989,95 @@ public final class TouchControlsOverlay extends FrameLayout implements TouchCont
             float otherCenterX = otherLeft + other.getWidth() / 2f;
             float otherCenterY = otherTop + other.getHeight() / 2f;
 
+            // Prefer true adjacent-edge snaps first. Alignment snaps are still allowed,
+            // but only when the resulting rectangle does not overlap another button.
             float[] xTargets = new float[]{
-                    otherLeft,
-                    otherRight,
                     otherLeft - width,
+                    otherRight,
+                    otherLeft,
                     otherRight - width,
                     otherCenterX - width / 2f
             };
             for (float target : xTargets) {
-                float delta = Math.abs(x - target);
-                if (delta <= threshold && delta < bestXDelta) {
-                    bestX = target;
+                float candidateX = clamp(target, 0f, maxX);
+                float delta = Math.abs(x - candidateX);
+                if (delta <= threshold
+                        && delta < bestXDelta
+                        && !positionOverlapsAnotherControl(movingView, candidateX, bestY, width, height)) {
+                    bestX = candidateX;
                     bestXDelta = delta;
                 }
             }
 
             float[] yTargets = new float[]{
-                    otherTop,
-                    otherBottom,
                     otherTop - height,
+                    otherBottom,
+                    otherTop,
                     otherBottom - height,
                     otherCenterY - height / 2f
             };
             for (float target : yTargets) {
-                float delta = Math.abs(y - target);
-                if (delta <= threshold && delta < bestYDelta) {
-                    bestY = target;
+                float candidateY = clamp(target, 0f, maxY);
+                float delta = Math.abs(y - candidateY);
+                if (delta <= threshold
+                        && delta < bestYDelta
+                        && !positionOverlapsAnotherControl(movingView, bestX, candidateY, width, height)) {
+                    bestY = candidateY;
                     bestYDelta = delta;
                 }
             }
         }
 
         return new float[]{
-                clamp(bestX, 0f, Math.max(0, getWidth() - width)),
-                clamp(bestY, 0f, Math.max(0, getHeight() - height))
+                clamp(bestX, 0f, maxX),
+                clamp(bestY, 0f, maxY)
         };
+    }
+
+    private boolean positionOverlapsAnotherControl(
+            @NonNull View movingView,
+            float x,
+            float y,
+            int width,
+            int height
+    ) {
+        float left = x;
+        float top = y;
+        float right = x + Math.max(1, width);
+        float bottom = y + Math.max(1, height);
+
+        for (int i = 0; i < getChildCount(); i++) {
+            View other = getChildAt(i);
+            if (other == movingView || other.getVisibility() != VISIBLE) continue;
+            if (!(other instanceof TouchControlButtonView)) continue;
+            if (other.getWidth() <= 0 || other.getHeight() <= 0) continue;
+
+            float otherLeft = other.getX();
+            float otherTop = other.getY();
+            float otherRight = otherLeft + other.getWidth();
+            float otherBottom = otherTop + other.getHeight();
+            if (rectanglesOverlap(left, top, right, bottom, otherLeft, otherTop, otherRight, otherBottom)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static boolean rectanglesOverlap(
+            float left,
+            float top,
+            float right,
+            float bottom,
+            float otherLeft,
+            float otherTop,
+            float otherRight,
+            float otherBottom
+    ) {
+        return left < otherRight
+                && right > otherLeft
+                && top < otherBottom
+                && bottom > otherTop;
     }
 
     private void showEditDialog(@NonNull TouchControlButtonView editingView, @NonNull TouchControlData data) {
@@ -943,6 +1096,7 @@ public final class TouchControlsOverlay extends FrameLayout implements TouchCont
         float originalWidth = data.width;
         float originalHeight = data.height;
         float originalSizePercent = data.sizePercent;
+        String originalLayoutSnapshot = snapshotLayoutSafely();
         float originalOpacity = data.opacity;
         float originalCornerRadius = data.cornerRadius;
         float originalStrokeWidth = data.strokeWidth;
@@ -1283,6 +1437,7 @@ public final class TouchControlsOverlay extends FrameLayout implements TouchCont
         dialogRef[0] = dialog;
 
         copyButton.setOnClickListener(v -> {
+            pushUndoSnapshot(originalLayoutSnapshot);
             TouchControlData copy = data.copy();
             copy.id = UUID.randomUUID().toString();
             copy.label = data.label + " Copy";
@@ -1299,6 +1454,7 @@ public final class TouchControlsOverlay extends FrameLayout implements TouchCont
         dialog.setOnShowListener(shown -> {
             styleDialogWindow(dialog);
             dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(button -> {
+                pushUndoSnapshot(originalLayoutSnapshot);
                 deleted[0] = true;
                 layoutData.controls.remove(data);
                 saveLayout();
@@ -1306,6 +1462,7 @@ public final class TouchControlsOverlay extends FrameLayout implements TouchCont
                 dialog.dismiss();
             });
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button -> {
+                pushUndoSnapshot(originalLayoutSnapshot);
                 String oldLabel = originalLabel;
                 String newLabel = label.getText() == null ? oldLabel : label.getText().toString().trim();
                 int actionPosition = Math.max(0, actionSpinner.getSelectedItemPosition());
@@ -1377,7 +1534,14 @@ public final class TouchControlsOverlay extends FrameLayout implements TouchCont
             }
         });
 
-        dialog.show();
+        try {
+            if (!isAttachedToWindow()) return;
+            dialog.show();
+        } catch (Throwable throwable) {
+            Logging.e(TAG, "Unable to show touch control editor", throwable);
+            setEditDialogPreviewAlpha(dialog, false);
+            Toast.makeText(context, "Unable to open touch editor.", Toast.LENGTH_LONG).show();
+        }
     }
 
     @NonNull

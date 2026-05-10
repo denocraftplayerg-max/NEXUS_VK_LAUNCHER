@@ -23,6 +23,7 @@ import android.os.Looper;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.ViewConfiguration;
+import android.view.ViewParent;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -37,6 +38,7 @@ import ca.dnamobile.javalauncher.feature.log.Logging;
 final class TouchControlButtonView extends TextView {
     interface Listener {
         void onChanged();
+        void onMoveStarted(@NonNull TouchControlButtonView view, @NonNull TouchControlData data);
         void onMoveRequested(
                 @NonNull TouchControlButtonView view,
                 @NonNull TouchControlData data,
@@ -195,7 +197,7 @@ final class TouchControlButtonView extends TextView {
     private boolean handleEditTouch(@NonNull MotionEvent event) {
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
-                getParent().requestDisallowInterceptTouchEvent(true);
+                requestParentDisallowIntercept(true);
                 setPressed(true);
                 editLongPressTriggered = false;
                 editDragging = false;
@@ -212,6 +214,7 @@ final class TouchControlButtonView extends TextView {
                 if (!editDragging && ((dx * dx) + (dy * dy)) > (touchSlop * touchSlop)) {
                     editDragging = true;
                     cancelEditLongPress();
+                    listener.onMoveStarted(this, data);
                 }
                 if (editDragging) {
                     listener.onMoveRequested(this, data, Math.max(0f, event.getRawX() - touchOffsetX), Math.max(0f, event.getRawY() - touchOffsetY));
@@ -220,12 +223,15 @@ final class TouchControlButtonView extends TextView {
             case MotionEvent.ACTION_CANCEL:
                 cancelEditLongPress();
                 setPressed(false);
-                getParent().requestDisallowInterceptTouchEvent(false);
+                requestParentDisallowIntercept(false);
+                if (editDragging && !editLongPressTriggered) {
+                    listener.onChanged();
+                }
                 return true;
             case MotionEvent.ACTION_UP:
                 cancelEditLongPress();
                 setPressed(false);
-                getParent().requestDisallowInterceptTouchEvent(false);
+                requestParentDisallowIntercept(false);
                 if (!editLongPressTriggered) {
                     performClick();
                     listener.onChanged();
@@ -239,8 +245,11 @@ final class TouchControlButtonView extends TextView {
     private void scheduleEditLongPress() {
         cancelEditLongPress();
         editLongPressRunnable = () -> {
+            editLongPressRunnable = null;
+            if (!isAttachedToWindow() || !editMode) return;
             editLongPressTriggered = true;
             setPressed(false);
+            requestParentDisallowIntercept(false);
             listener.onEditRequested(this, data);
         };
         mainHandler.postDelayed(editLongPressRunnable, ViewConfiguration.getLongPressTimeout());
@@ -250,6 +259,13 @@ final class TouchControlButtonView extends TextView {
         if (editLongPressRunnable != null) {
             mainHandler.removeCallbacks(editLongPressRunnable);
             editLongPressRunnable = null;
+        }
+    }
+
+    private void requestParentDisallowIntercept(boolean disallow) {
+        ViewParent parent = getParent();
+        if (parent != null) {
+            parent.requestDisallowInterceptTouchEvent(disallow);
         }
     }
 

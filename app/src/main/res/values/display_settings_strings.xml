@@ -12,5 +12,5 @@
 
     <string name="settings_renderer_avoid_rounded_corners_on">Avoid rounded display corners: On</string>
     <string name="settings_renderer_avoid_rounded_corners_off">Avoid rounded display corners: Off</string>
-    <string name="settings_renderer_avoid_rounded_corners_summary">Adds a small safe inset around the game so important content is less likely to be hidden by rounded phone corners. This cannot change the physical screen shape.</string>
+    <string name="settings_renderer_avoid_rounded_corners_summary">Allows the gameview to ignore rounded corners of your device by adding a small inset.</string>
 </resources>

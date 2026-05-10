@@ -144,6 +144,26 @@ public final class GamepadMappingDialog {
         profileCard.addView(profileSpinner, matchWrapWithTopMargin(activity, 6));
         profileInfo.setVisibility(profiles.size() > 1 ? View.VISIBLE : View.GONE);
 
+        // Mapping cards live directly under the active controller profile so users can change
+        // the attached controller's mappings before the general overlay/hotbar settings.
+        LinearLayout menuMappingCard = addCard(activity, root);
+        LinearLayout menuMappingContent = new LinearLayout(activity);
+        menuMappingContent.setOrientation(LinearLayout.VERTICAL);
+        addCollapsibleHeader(activity, menuMappingCard, "Menu mappings", menuMappingContent, false);
+        addInfoText(activity, menuMappingContent,
+                "Used in Minecraft menus. D-pad cursor movement now only repeats when the selected D-pad action is a Cursor action.");
+        addSection(activity, menuMappingContent, false, store, selectedProfileKey(profiles, profileSpinner), menuSpinners);
+        menuMappingCard.addView(menuMappingContent);
+
+        LinearLayout gameMappingCard = addCard(activity, root);
+        LinearLayout gameMappingContent = new LinearLayout(activity);
+        gameMappingContent.setOrientation(LinearLayout.VERTICAL);
+        addCollapsibleHeader(activity, gameMappingCard, "In-game mappings", gameMappingContent, false);
+        addInfoText(activity, gameMappingContent,
+                "Used while Minecraft has grabbed the mouse or when Force in-game mappings is enabled.");
+        addSection(activity, gameMappingContent, true, store, selectedProfileKey(profiles, profileSpinner), gameSpinners);
+        gameMappingCard.addView(gameMappingContent);
+
         // General overlay card.
         LinearLayout overlayCard = addCard(activity, root);
         addCardTitle(activity, overlayCard, "Overlay behavior");
@@ -278,25 +298,6 @@ public final class GamepadMappingDialog {
 
         TextView hotbarPaddingLabel = addFloatControl(activity, hotbarCard, "Vertical padding dp", ControlsPreferences.getHotbarVerticalPaddingDp(activity));
         SeekBar hotbarPadding = addFloatSeekBar(activity, hotbarCard, 0, 80, ControlsPreferences.getHotbarVerticalPaddingDp(activity), hotbarPaddingLabel, "Vertical padding dp");
-
-        // Mapping cards. Collapsed by default because the button lists are long.
-        LinearLayout menuMappingCard = addCard(activity, root);
-        LinearLayout menuMappingContent = new LinearLayout(activity);
-        menuMappingContent.setOrientation(LinearLayout.VERTICAL);
-        addCollapsibleHeader(activity, menuMappingCard, "Menu mappings", menuMappingContent, false);
-        addInfoText(activity, menuMappingContent,
-                "Used in Minecraft menus. D-pad cursor movement now only repeats when the selected D-pad action is a Cursor action.");
-        addSection(activity, menuMappingContent, false, store, selectedProfileKey(profiles, profileSpinner), menuSpinners);
-        menuMappingCard.addView(menuMappingContent);
-
-        LinearLayout gameMappingCard = addCard(activity, root);
-        LinearLayout gameMappingContent = new LinearLayout(activity);
-        gameMappingContent.setOrientation(LinearLayout.VERTICAL);
-        addCollapsibleHeader(activity, gameMappingCard, "In-game mappings", gameMappingContent, false);
-        addInfoText(activity, gameMappingContent,
-                "Used while Minecraft has grabbed the mouse or when Force in-game mappings is enabled.");
-        addSection(activity, gameMappingContent, true, store, selectedProfileKey(profiles, profileSpinner), gameSpinners);
-        gameMappingCard.addView(gameMappingContent);
 
         profileSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
@@ -1008,47 +1009,134 @@ public final class GamepadMappingDialog {
             @NonNull String profileKey,
             @NonNull Map<GamepadButton, Spinner[]> out
     ) {
-        ArrayAdapter<GamepadAction> adapter = darkAdapter(activity, Arrays.asList(GamepadAction.values()));
+        ArrayAdapter<GamepadAction> actionAdapter = darkAdapter(activity, Arrays.asList(GamepadAction.values()));
+        ArrayList<String> extraSlotLabels = new ArrayList<>();
+        extraSlotLabels.add("Extra mappings hidden");
+        for (int slot = 1; slot < GamepadMappingStore.MAX_ACTION_SLOTS; slot++) {
+            extraSlotLabels.add("Show position " + slot);
+        }
 
         for (GamepadButton button : GamepadButton.values()) {
             LinearLayout group = new LinearLayout(activity);
             group.setOrientation(LinearLayout.VERTICAL);
             group.setPadding(0, dp(activity, 6), 0, dp(activity, 8));
 
-            TextView label = new TextView(activity);
-            label.setText(button.toString());
-            label.setTextSize(14);
-            label.setTypeface(Typeface.DEFAULT_BOLD);
-            label.setTextColor(COLOR_TEXT_SECONDARY);
-            label.setPadding(0, 0, 0, dp(activity, 3));
-            group.addView(label, new LinearLayout.LayoutParams(
+            Spinner[] slots = new Spinner[GamepadMappingStore.MAX_ACTION_SLOTS];
+
+            LinearLayout primaryRow = new LinearLayout(activity);
+            primaryRow.setOrientation(LinearLayout.HORIZONTAL);
+            primaryRow.setGravity(Gravity.CENTER_VERTICAL);
+            primaryRow.setPadding(0, dp(activity, 2), 0, dp(activity, 2));
+
+            LinearLayout buttonColumn = new LinearLayout(activity);
+            buttonColumn.setOrientation(LinearLayout.VERTICAL);
+            buttonColumn.setGravity(Gravity.CENTER_VERTICAL);
+
+            TextView buttonLabel = new TextView(activity);
+            buttonLabel.setText(button.toString());
+            buttonLabel.setTextSize(14);
+            buttonLabel.setTypeface(Typeface.DEFAULT_BOLD);
+            buttonLabel.setTextColor(COLOR_TEXT_SECONDARY);
+
+            TextView positionZeroLabel = new TextView(activity);
+            positionZeroLabel.setText("Position 0");
+            positionZeroLabel.setTextSize(12);
+            positionZeroLabel.setTextColor(COLOR_TEXT_MUTED);
+
+            buttonColumn.addView(buttonLabel, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+            ));
+            buttonColumn.addView(positionZeroLabel, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
             ));
 
-            Spinner[] slots = new Spinner[GamepadMappingStore.MAX_ACTION_SLOTS];
-            for (int slot = 0; slot < GamepadMappingStore.MAX_ACTION_SLOTS; slot++) {
-                LinearLayout row = new LinearLayout(activity);
-                row.setOrientation(LinearLayout.HORIZONTAL);
-                row.setGravity(Gravity.CENTER_VERTICAL);
-                row.setPadding(dp(activity, 12), dp(activity, 2), 0, dp(activity, 2));
+            Spinner primarySpinner = new Spinner(activity);
+            primarySpinner.setAdapter(actionAdapter);
+            primarySpinner.setSelection(store.getButtonActionSlot(button, gameMode, profileKey, 0).ordinal());
+            slots[0] = primarySpinner;
 
-                TextView slotLabel = new TextView(activity);
-                slotLabel.setText("Position " + slot);
-                slotLabel.setTextSize(12);
-                slotLabel.setTextColor(COLOR_TEXT_MUTED);
+            primaryRow.addView(buttonColumn, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.9f));
+            primaryRow.addView(primarySpinner, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.55f));
+            group.addView(primaryRow, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+            ));
 
-                Spinner spinner = new Spinner(activity);
-                spinner.setAdapter(adapter);
-                spinner.setSelection(store.getButtonActionSlot(button, gameMode, profileKey, slot).ordinal());
+            if (GamepadMappingStore.MAX_ACTION_SLOTS > 1) {
+                ArrayList<View> extraRows = new ArrayList<>();
 
-                row.addView(slotLabel, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.75f));
-                row.addView(spinner, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.6f));
-                group.addView(row);
-                slots[slot] = spinner;
+                LinearLayout extraSelectorRow = new LinearLayout(activity);
+                extraSelectorRow.setOrientation(LinearLayout.HORIZONTAL);
+                extraSelectorRow.setGravity(Gravity.CENTER_VERTICAL);
+                extraSelectorRow.setPadding(dp(activity, 12), dp(activity, 2), 0, dp(activity, 2));
+
+                TextView extraLabel = new TextView(activity);
+                extraLabel.setText("Extra slots");
+                extraLabel.setTextSize(12);
+                extraLabel.setTextColor(COLOR_TEXT_MUTED);
+
+                Spinner extraSlotSelector = new Spinner(activity);
+                extraSlotSelector.setAdapter(darkAdapter(activity, extraSlotLabels));
+                extraSlotSelector.setSelection(0, false);
+
+                extraSelectorRow.addView(extraLabel, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.75f));
+                extraSelectorRow.addView(extraSlotSelector, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.6f));
+                group.addView(extraSelectorRow, new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                ));
+
+                for (int slot = 1; slot < GamepadMappingStore.MAX_ACTION_SLOTS; slot++) {
+                    LinearLayout row = new LinearLayout(activity);
+                    row.setOrientation(LinearLayout.HORIZONTAL);
+                    row.setGravity(Gravity.CENTER_VERTICAL);
+                    row.setPadding(dp(activity, 12), dp(activity, 2), 0, dp(activity, 2));
+                    row.setVisibility(View.GONE);
+
+                    TextView slotLabel = new TextView(activity);
+                    slotLabel.setText("Position " + slot);
+                    slotLabel.setTextSize(12);
+                    slotLabel.setTextColor(COLOR_TEXT_MUTED);
+
+                    Spinner spinner = new Spinner(activity);
+                    spinner.setAdapter(actionAdapter);
+                    spinner.setSelection(store.getButtonActionSlot(button, gameMode, profileKey, slot).ordinal());
+
+                    row.addView(slotLabel, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.75f));
+                    row.addView(spinner, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.6f));
+                    group.addView(row, new LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT
+                    ));
+
+                    extraRows.add(row);
+                    slots[slot] = spinner;
+                }
+
+                extraSlotSelector.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+                    @Override
+                    public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                        int visibleExtraIndex = position - 1;
+                        for (int i = 0; i < extraRows.size(); i++) {
+                            extraRows.get(i).setVisibility(i == visibleExtraIndex ? View.VISIBLE : View.GONE);
+                        }
+                    }
+
+                    @Override
+                    public void onNothingSelected(AdapterView<?> parent) {
+                        for (View row : extraRows) {
+                            row.setVisibility(View.GONE);
+                        }
+                    }
+                });
             }
 
-            root.addView(group);
+            root.addView(group, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+            ));
             out.put(button, slots);
         }
     }

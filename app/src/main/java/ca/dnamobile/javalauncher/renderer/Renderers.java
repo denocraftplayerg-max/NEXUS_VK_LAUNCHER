@@ -66,9 +66,6 @@ public final class Renderers {
         init(context, true);
     }
 
-    /**
-     * Kept for old internal tests only. The public settings UI now uses installed plugin APKs.
-     */
     @Deprecated
     public static synchronized void importRendererApk(@NonNull Context context, @NonNull Uri uri) throws Exception {
         RendererInterface imported = RendererPluginManager.importRendererApk(context, uri);
