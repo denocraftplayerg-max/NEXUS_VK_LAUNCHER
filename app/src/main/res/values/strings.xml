@@ -1,8 +1,90 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">NEXUS VK Launcher</string>
-    <string name="title_launcher_settings">Launcher Settings</string>
-    <string name="title_controls">Controls</string>
-    <string name="title_controls_editor">Controls Editor</string>
-    <string name="error_activity_title">Error</string>
+
+    <!-- Settings tabs -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_account_title">Account</string>
+    <string name="settings_instance_title">Instance</string>
+    <string name="settings_launcher_title">Launcher</string>
+    <string name="settings_memory_title">Memory</string>
+
+    <!-- Account / sign-in -->
+    <string name="status_signed_out">Signed out</string>
+    <string name="custom_skin_status_none">No custom skin set</string>
+    <string name="button_sign_in">Sign in offline</string>
+    <string name="button_use_microsoft_account">Use Microsoft Account</string>
+    <string name="button_manage_offline_accounts">Manage offline accounts</string>
+    <string name="button_refresh_microsoft_skin">Refresh skin</string>
+    <string name="microsoft_skin_change_button">Change skin</string>
+    <string name="button_sign_out">Sign out</string>
+
+    <!-- Renderer settings -->
+    <string name="renderer_settings_title">Renderer</string>
+    <string name="renderer_settings_summary">Select and configure the graphics renderer used to run Minecraft.</string>
+    <string name="vulkan_driver_settings_title">Vulkan Driver</string>
+    <string name="render_surface_section_title">Render Surface</string>
+    <string name="render_surface_texture_view">Use TextureView (experimental)</string>
+    <string name="settings_renderer_ignore_notch_off">Ignore display notch: Off</string>
+    <string name="settings_renderer_ignore_notch_summary">When enabled, Minecraft ignores the display notch and punch-hole area.</string>
+    <string name="use_opengl_26_plus_off">OpenGL ES 3.1+ optimisations: Off</string>
+    <string name="use_opengl_26_plus_summary">Use optimised OpenGL ES 3.1+ paths when available. Disable if you see rendering artefacts.</string>
+    <string name="use_system_vulkan_driver_off">Use system Vulkan driver: Off</string>
+    <string name="use_system_vulkan_driver_summary">Use the device system Vulkan driver instead of a custom one. May affect compatibility.</string>
+    <string name="button_refresh_renderers">Refresh renderers</string>
+    <string name="button_open_renderer_plugin_settings">Renderer plugin settings</string>
+    <string name="button_grant_renderer_storage_access">Grant storage access</string>
+    <string name="button_clear_renderer_plugin_cache">Clear renderer cache</string>
+
+    <!-- Controls -->
+    <string name="controller_settings_title">Controllers</string>
+    <string name="controller_touch_controls_title">Touch Controls</string>
+    <string name="controller_touch_controls_enabled_on">Touch controls: On</string>
+    <string name="controller_touch_controls_summary">Show on-screen touch controls during gameplay.</string>
+    <string name="controller_built_in_title">Built-in controller support</string>
+    <string name="controller_built_in_summary">Enable built-in gamepad/controller support using SDL.</string>
+    <string name="controller_force_sdl_off">Force SDL controller: Off</string>
+    <string name="controller_force_sdl_summary">Force SDL input handling for controllers even when not detected automatically.</string>
+    <string name="controller_double_tap_to_drop_off">Double-tap to drop: Off</string>
+    <string name="controller_double_tap_to_drop_summary">Double-tap the on-screen drop button to drop an entire stack.</string>
+    <string name="controller_minecraft_touch_gestures_on">Minecraft touch gestures: On</string>
+    <string name="controller_minecraft_touch_gestures_summary">Enable Minecraft's native touch gesture handling (swipe to sprint, etc.).</string>
+    <string name="button_manage_touch_controls">Edit touch controls</string>
+    <string name="button_edit_builtin_controller">Edit controller mapping</string>
+
+    <!-- Game / overlay -->
+    <string name="game_settings_button_on">In-game settings button: On</string>
+    <string name="game_settings_button_summary">Show a floating settings button during gameplay.</string>
+    <string name="game_log_overlay_off">Game log overlay: Off</string>
+    <string name="game_log_overlay_summary">Show a scrollable game log overlay during gameplay. Useful for debugging.</string>
+    <string name="button_share_latest_log">Share latest log</string>
+    <string name="log_keep_history">Keep log history</string>
+
+    <!-- Memory -->
+    <string name="memory_allocated_placeholder">Allocated: — MB</string>
+    <string name="memory_available_placeholder">Available: — MB</string>
+
+    <!-- Simple Voice Chat -->
+    <string name="settings_simple_voice_chat_title">Simple Voice Chat</string>
+    <string name="settings_simple_voice_chat_summary">Configure microphone access for Simple Voice Chat mod support.</string>
+    <string name="simple_voice_chat_microphone_button_enable">Enable microphone</string>
+    <string name="simple_voice_chat_microphone_status_missing">Microphone permission not granted</string>
+
+    <!-- Notifications -->
+    <string name="install_notifications_off">Install notifications: Off</string>
+    <string name="install_notifications_summary_permission_needed">Notification permission is needed to show install progress.</string>
+
+    <!-- Instance / shared installs -->
+    <string name="shared_installs_show">Show shared installs</string>
+    <string name="shared_installs_summary">Show shared game installations available to all instances.</string>
+    <string name="inherited_vanilla_remove_off">Remove inherited vanilla files: Off</string>
+    <string name="inherited_vanilla_remove_summary">When enabled, vanilla game files inherited from a parent instance are removed from this instance's folder to save space.</string>
+
+    <!-- Privacy &amp; Legal -->
+    <string name="settings_privacy_policy_title">Privacy &amp; Legal</string>
+    <string name="settings_privacy_policy_summary">Review the terms and policies for this launcher.</string>
+    <string name="button_open_minecraft_eula">Minecraft EULA</string>
+    <string name="button_open_droidbridge_privacy_policy">Privacy Policy</string>
+    <string name="button_open_droidbridge_terms">Terms of Service</string>
+    <string name="button_open_droidbridge_license">Open-source Licenses</string>
 </resources>
