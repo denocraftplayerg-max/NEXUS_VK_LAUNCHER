@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">NEXUS VK Launcher</string>
+    <string name="title_launcher_settings">Launcher Settings</string>
+    <string name="title_controls">Controls</string>
+    <string name="title_controls_editor">Controls Editor</string>
+    <string name="error_activity_title">Error</string>
+</resources>
