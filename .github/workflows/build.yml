@@ -1,0 +1,124 @@
+name: NEXUS VK LAUNCHER — Build APK
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build type'
+        required: true
+        default: 'debug'
+        type: choice
+        options:
+          - debug
+          - release
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK
+        run: |
+          echo "Installing Android NDK..."
+          sdkmanager "ndk;25.2.9519653" "cmake;3.22.1"
+          echo "NDK installed."
+
+      - name: Grant Gradle execute permissions
+        run: chmod +x gradlew
+
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Build Debug APK
+        if: github.event.inputs.build_type != 'release'
+        run: |
+          echo "Building NEXUS VK LAUNCHER Debug APK..."
+          ./gradlew assembleDebug --stacktrace
+          echo "Build complete."
+
+      - name: Build Release APK (unsigned)
+        if: github.event.inputs.build_type == 'release'
+        run: |
+          echo "Building NEXUS VK LAUNCHER Release APK (unsigned)..."
+          ./gradlew assembleRelease --stacktrace
+          echo "Build complete."
+
+      - name: Sign Release APK
+        if: github.event.inputs.build_type == 'release' && env.KEYSTORE_BASE64 != ''
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+        run: |
+          echo "Signing APK..."
+          echo "$KEYSTORE_BASE64" | base64 -d > keystore.jks
+          find . -name "*.apk" -path "*/release/*" ! -path "*/intermediates/*" | while read apk; do
+            echo "Signing: $apk"
+            $ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools/ | sort -V | tail -1)/apksigner sign \
+              --ks keystore.jks \
+              --ks-key-alias "$KEY_ALIAS" \
+              --ks-pass pass:"$STORE_PASSWORD" \
+              --key-pass pass:"$KEY_PASSWORD" \
+              --out "${apk%.apk}-signed.apk" \
+              "$apk"
+          done
+          rm -f keystore.jks
+          echo "Signing complete."
+
+      - name: Collect APKs
+        run: |
+          mkdir -p nexus_vk_output
+          find . -name "*.apk" ! -path "*/intermediates/*" | while read f; do
+            cp "$f" nexus_vk_output/
+            echo "Collected: $(basename $f)"
+          done
+          ls -lh nexus_vk_output/
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NEXUS-VK-LAUNCHER-${{ github.event.inputs.build_type || 'debug' }}-${{ github.sha }}
+          path: nexus_vk_output/*.apk
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Build summary
+        run: |
+          echo "## NEXUS VK LAUNCHER — Build OK" >> $GITHUB_STEP_SUMMARY
+          echo "| Campo | Valor |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Tipo | ${{ github.event.inputs.build_type || 'debug' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### APKs geradas" >> $GITHUB_STEP_SUMMARY
+          for f in nexus_vk_output/*.apk; do
+            [ -f "$f" ] && echo "- \`$(basename $f)\`" >> $GITHUB_STEP_SUMMARY
+          done
