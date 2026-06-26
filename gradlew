@@ -180,33 +180,13 @@ set -- \
         org.gradle.wrapper.GradleWrapperMain \
         "$@"
 
-# Stop when "xargs" is not available.
-if ! command -v xargs >/dev/null 2>&1
-then
-    die "xargs is not available"
-fi
-
-# Use "xargs" to parse quoted args.
-#
-# With -n1 it outputs one arg per line, with the quotes and backslashes removed.
-#
-# In Bash we could simply go:
-#
-#   readarray ARGS < <( xargs -n1 <<<"$" ) &&
-#   set -- "${ARGS[@]}" "$@"
-#
-# but POSIX shell has neither arrays nor command substitution, so instead we
-# post-process each arg (to determine if it is empty or not), root to set
-# the new positional parameters and then repeat the entire deal with the
-# temporary directory set.
-#
-# NB: Because of the way set we use this, we also need to make sure
-# the default value of $TASK is updated correctly.
-eval "set -- $(
-        printf '%s\0' "$DEFAULT_JVM_OPTS $JAVA_OPTS $GRADLE_OPTS" |
-        xargs -0 -n1 |
-        sed ' s~[^-[:alnum:]+,./:=@_]~\\&~g; ' |
-        tr '\n' ' '
-    )" '"$@"'
+# Prepend JVM options via simple word-split eval.
+# $DEFAULT_JVM_OPTS is intentionally unquoted so the shell word-splits
+# inner-quoted args (e.g. '"-Xmx64m" "-Xms64m"' -> two separate args).
+# shellcheck disable=SC2086
+eval set -- $DEFAULT_JVM_OPTS \
+    ${JAVA_OPTS:+"$JAVA_OPTS"} \
+    ${GRADLE_OPTS:+"$GRADLE_OPTS"} \
+    '"$@"'
 
 exec "$JAVACMD" "$@"
