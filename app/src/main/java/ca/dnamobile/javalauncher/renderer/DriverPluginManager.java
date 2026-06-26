@@ -2,12 +2,11 @@
  * Copyright (c) 2026 DNA Mobile Applications.
  * All rights reserved.
  *
- * This file is DroidBridge project code.
- * It is not part of Minecraft and does not grant rights to Minecraft,
- * Mojang, Microsoft, PojavLauncher, Zalith Launcher, or any third-party project.
+ * NEXUS VK LAUNCHER modifications: Vulkan API mode environment (buildNexusVulkanApiEnvironment).
+ * When isNexusVulkanApiMode() is true, all EGL/Mesa/OSMesa vars are cleared and
+ * NEXUS_VK_MODE=1 is set so gl_bridge.c skips EGL completely.
  *
- * Files written entirely by DNA Mobile Applications are proprietary unless
- * a file header or separate license notice states otherwise.
+ * SPDX-License-Identifier: Proprietary (DroidBridge) / LGPL-3.0-only (PojavLauncher-derived)
  */
 
 package ca.dnamobile.javalauncher.renderer;
@@ -40,9 +39,9 @@ import ca.dnamobile.javalauncher.utils.path.PathManager;
 /**
  * Vulkan driver manager used only by Vulkan Zink.
  *
- * Renderer plugins are OpenGL wrappers. Driver plugins are Vulkan ICDs such as
- * Turnip/Freedreno. Keep these separate so the Zink renderer dropdown does not
- * become polluted with normal renderer plugins like MobileGlues/GL4ES.
+ * NEXUS VK LAUNCHER: When LauncherPreferences.isNexusVulkanApiMode() is true,
+ * buildEnvironment() returns buildNexusVulkanApiEnvironment() — a clean Vulkan-only
+ * environment with no EGL, no Mesa, and no OSMesa. VulkanMod drives Vulkan directly.
  */
 public final class DriverPluginManager {
     private static final String TAG = "DriverPluginManager";
@@ -108,7 +107,6 @@ public final class DriverPluginManager {
             Driver driver = DRIVERS.get(i);
             if (driver.getName().equals(selected)) return driver;
         }
-
         return DRIVERS.get(0);
     }
 
@@ -138,34 +136,35 @@ public final class DriverPluginManager {
     @NonNull
     public static List<File> getSelectedDriverLibrarySearchPaths(@NonNull Context context, @Nullable RendererInterface renderer) {
         ArrayList<File> paths = new ArrayList<>();
-
-        // Driver plugins are Vulkan ICDs. Do not leak Turnip/Freedreno into LTW,
-        // MobileGlues, GL4ES, or Krypton. LTW especially must use the normal
-        // system Vulkan loader path used by Zalith, otherwise AdrenoSupp/Turnip
-        // can be loaded before LTW and glMapBuffer/glDraw paths become unstable.
+        // In NEXUS Vulkan API mode, system libvulkan.so is used. No custom ICD paths.
+        if (LauncherPreferences.isNexusVulkanApiMode(context)) {
+            return paths;
+        }
         if (!isVulkanZinkRenderer(renderer)) {
             return paths;
         }
-
         if (LauncherPreferences.isUseSystemVulkanDriver(context)) {
             return paths;
         }
-
         Driver driver = getSelectedDriver(context);
         File dir;
-
         if (driver.getType() == Driver.Type.TURNIP) {
             dir = driver.getNativeLibraryDir();
         } else {
             dir = findBundledDriverDir(context);
         }
-
         if (dir != null && dir.isDirectory()) paths.add(dir);
         return paths;
     }
 
     @NonNull
     public static Map<String, String> buildEnvironment(@NonNull Context context, @Nullable RendererInterface renderer) {
+        // NEXUS VK LAUNCHER: Pure Vulkan API mode — skip all EGL, no Mesa, no OSMesa.
+        if (LauncherPreferences.isNexusVulkanApiMode(context)) {
+            Logging.i(TAG, "NEXUS VK LAUNCHER: Vulkan API mode — EGL DISABLED, using buildNexusVulkanApiEnvironment()");
+            return buildNexusVulkanApiEnvironment();
+        }
+
         LinkedHashMap<String, String> env = new LinkedHashMap<>();
         boolean zink = isVulkanZinkRenderer(renderer);
         boolean useSystemVulkan = LauncherPreferences.isUseSystemVulkanDriver(context);
@@ -175,8 +174,6 @@ public final class DriverPluginManager {
         env.put("JAVA_LAUNCHER_VULKAN_DRIVER", useSystemVulkan ? SYSTEM_VULKAN_DRIVER : driver.getName());
 
         if (!zink) {
-            // Non-Zink renderers are OpenGL wrappers. Force them away from custom
-            // Vulkan ICD plugins and clear stale driver variables from previous launches.
             env.put("POJAV_USE_SYSTEM_VULKAN", "1");
             env.put("DRIVER_PATH", "");
             env.put("VK_ICD_FILENAMES", "");
@@ -190,25 +187,78 @@ public final class DriverPluginManager {
 
         applyGlobalVulkanDriverEnvironment(context, env, driver, true, useSystemVulkan);
         applyZinkMesaEnvironment(env);
-
-        // v56: first force the safe Android presentation path for all Vulkan Zink
-        // launches. The log proves Zink creates a context, while the Adreno 740
-        // visual issue remains in the final displayed frame.
         DroidBridgeMesaSupport.applyZinkSurfaceWorkaround(renderer);
-
-        // v61: the legacy Freedreno UUID returns earlier as direct freedreno_kgsl.
-        // Do not alias it to Vulkan Zink here, otherwise swapped Mojo libEGL_mesa
-        // and libgallium_dri payloads will never be used.
-
-        // Explicit custom Mesa-Zink entries can still use the experimental route.
         DroidBridgeMesaSupport.applyZinkTurnipEnvironment(context, renderer, env);
         return env;
     }
 
+    /**
+     * NEXUS VK LAUNCHER — Pure Vulkan API environment for VulkanMod.
+     *
+     * Sets NEXUS_VK_MODE=1 (read by gl_bridge.c to skip all EGL).
+     * Sets glfwstub.initEgl=false (LWJGL GLFW stub skips eglInitialize).
+     * Sets POJAV_USE_SYSTEM_VULKAN=1 (libvulkan.so used directly by VulkanMod).
+     * Clears all EGL, Mesa, OSMesa, and custom Turnip driver variables.
+     */
+    @NonNull
+    private static LinkedHashMap<String, String> buildNexusVulkanApiEnvironment() {
+        LinkedHashMap<String, String> env = new LinkedHashMap<>();
+
+        // gl_bridge.c skips all EGL when this is set
+        env.put("NEXUS_VK_MODE", "1");
+
+        // Renderer identifier for telemetry/logging
+        env.put("POJAV_RENDERER", "vulkan");
+
+        // LWJGL GLFW stub: do NOT call eglInitialize
+        env.put("glfwstub.initEgl", "false");
+
+        // VulkanMod uses system libvulkan.so directly (Mali, Adreno, etc.)
+        env.put("POJAV_USE_SYSTEM_VULKAN", "1");
+        env.put("JAVA_LAUNCHER_USE_SYSTEM_VULKAN_DRIVER", "1");
+        env.put("JAVA_LAUNCHER_VULKAN_DRIVER", "System Vulkan (NEXUS VK MODE)");
+
+        // Clear all EGL variables — EGL must not be touched
+        env.put("POJAVEXEC_EGL", "");
+        env.put("LIBGL_EGL", "");
+        env.put("POJAV_EGL_LIBRARY", "");
+        env.put("POJAVEXEC_EGL_LIBRARY", "");
+        env.put("POJAV_RENDERER_LIBRARY", "");
+        env.put("POJAVEXEC_RENDERER", "");
+        env.put("LIB_MESA_NAME", "");
+
+        // Clear all Mesa/Zink variables
+        env.put("DROIDBRIDGE_MESA", "");
+        env.put("DROIDBRIDGE_MESA_MODE", "");
+        env.put("DROIDBRIDGE_MESA_DRIVER", "");
+        env.put("DROIDBRIDGE_MESA_DESKTOP_GL", "");
+        env.put("DROIDBRIDGE_EGL_FORCE_DESKTOP_GL", "");
+        env.put("DROIDBRIDGE_EGL_NO_SYSTEM_FALLBACK", "");
+        env.put("MESA_LOADER_DRIVER_OVERRIDE", "");
+        env.put("GALLIUM_DRIVER", "");
+        env.put("MESA_GL_VERSION_OVERRIDE", "");
+        env.put("MESA_GLSL_VERSION_OVERRIDE", "");
+
+        // Clear all OSMesa variables
+        env.put("OSMESA_LIB", "");
+        env.put("POJAV_OSMESA_LIBRARY", "");
+        env.put("OSMESA_LIBRARY", "");
+        env.put("LIBGL_OSMESA", "");
+
+        // Clear custom Turnip/Freedreno driver paths
+        env.put("DRIVER_PATH", "");
+        env.put("VK_ICD_FILENAMES", "");
+        env.put("VK_DRIVER_FILES", "");
+        env.put("POJAV_LOAD_TURNIP", "");
+        env.put("DROIDBRIDGE_LOAD_TURNIP", "");
+        env.put("DROIDBRIDGE_USE_CUSTOM_TURNIP", "");
+        env.put("DROIDBRIDGE_CUSTOM_VULKAN_DRIVER", "");
+        env.put("POJAV_CUSTOM_VULKAN_DRIVER", "");
+
+        return env;
+    }
+
     private static void applyDirectFreedrenoKgslEnvironment(@NonNull LinkedHashMap<String, String> env) {
-        // v61: saved Mesa Freedreno KGSL is no longer a Vulkan Zink alias.
-        // Reinforce the renderer's Mojo-style direct Mesa env here because
-        // DriverPluginManager is merged after renderer.getRendererEnv().
         env.put("DROIDBRIDGE_MESA", "1");
         env.put("DROIDBRIDGE_MESA_MODE", "freedreno_kgsl");
         env.put("DROIDBRIDGE_MESA_SAFE_SWAPS", "1");
@@ -216,14 +266,12 @@ public final class DriverPluginManager {
         env.put("DROIDBRIDGE_MOJO_MESA_V61", "1");
         env.put("DROIDBRIDGE_MESA_AAR_SINGLE_SOURCE", "1");
         env.put("DROIDBRIDGE_MOJO_MESA_AAR_V72", "1");
-
         env.put("POJAV_RENDERER", "freedreno_kgsl");
         env.put("POJAV_RENDERER_MESA_MODE", "freedreno_kgsl");
         env.put("MESA_LOADER_DRIVER_OVERRIDE", "kgsl");
         env.put("GALLIUM_DRIVER", "");
         env.put("EGL_PLATFORM", "android");
         env.put("FORCE_VSYNC", "false");
-
         env.put("LIBGL_ES", "2");
         env.put("MESA_GL_VERSION_OVERRIDE", "3.3COMPAT");
         env.put("MESA_GLSL_VERSION_OVERRIDE", "330");
@@ -236,18 +284,15 @@ public final class DriverPluginManager {
         env.put("allow_higher_compat_version", "true");
         env.put("force_glsl_extensions_warn", "true");
         env.put("allow_glsl_extension_directive_midshader", "true");
-
         env.put("DROIDBRIDGE_MESA_DESKTOP_GL", "1");
         env.put("DROIDBRIDGE_EGL_FORCE_DESKTOP_GL", "1");
         env.put("DROIDBRIDGE_EGL_NO_SYSTEM_FALLBACK", "1");
-
         env.put("POJAVEXEC_EGL", DroidBridgeMesaSupport.LIB_EGL_MESA);
         env.put("POJAV_EGL_LIBRARY", DroidBridgeMesaSupport.LIB_EGL_MESA);
         env.put("POJAVEXEC_EGL_LIBRARY", DroidBridgeMesaSupport.LIB_EGL_MESA);
         env.put("POJAV_RENDERER_LIBRARY", DroidBridgeMesaSupport.LIB_EGL_MESA);
         env.put("POJAVEXEC_RENDERER", DroidBridgeMesaSupport.LIB_EGL_MESA);
         env.put("LIB_MESA_NAME", DroidBridgeMesaSupport.LIB_EGL_MESA);
-
         env.put("POJAV_USE_SYSTEM_VULKAN", "");
         env.put("DRIVER_PATH", "");
         env.put("VK_ICD_FILENAMES", "");
@@ -259,7 +304,6 @@ public final class DriverPluginManager {
         env.put("POJAV_CUSTOM_VULKAN_DRIVER", "");
         env.put("ZINK_DEBUG", "");
         env.put("ZINK_DESCRIPTORS", "");
-
         env.put("OSMESA_LIB", "");
         env.put("POJAV_OSMESA_LIBRARY", "");
         env.put("OSMESA_LIBRARY", "");
@@ -267,12 +311,8 @@ public final class DriverPluginManager {
     }
 
     private static void applyGlobalVulkanDriverEnvironment(
-            @NonNull Context context,
-            @NonNull LinkedHashMap<String, String> env,
-            @NonNull Driver driver,
-            boolean zink,
-            boolean useSystemVulkan
-    ) {
+            @NonNull Context context, @NonNull LinkedHashMap<String, String> env,
+            @NonNull Driver driver, boolean zink, boolean useSystemVulkan) {
         if (useSystemVulkan) {
             env.put("POJAV_USE_SYSTEM_VULKAN", "1");
             env.put("DRIVER_PATH", "");
@@ -280,27 +320,20 @@ public final class DriverPluginManager {
             env.put("VK_DRIVER_FILES", "");
             return;
         }
-
         env.put("POJAV_USE_SYSTEM_VULKAN", "0");
-
         if (driver.getType() == Driver.Type.TURNIP) {
             applyTurnipDriverEnvironment(context, env, driver);
             return;
         }
-
         if (zink) {
             File bundled = findBundledDriverDir(context);
             if (bundled != null && bundled.isDirectory()) {
                 env.put("DRIVER_PATH", bundled.getAbsolutePath());
             } else {
-                // No custom/bundled Turnip is available. Fall back to system Vulkan
-                // so Zink still has a usable Vulkan loader instead of a null path.
                 env.put("POJAV_USE_SYSTEM_VULKAN", "1");
                 env.put("DRIVER_PATH", "");
             }
         } else {
-            // Non-Zink renderers can still launch Vulkan mods. If no custom driver
-            // is selected, clear any stale Turnip env left from an earlier launch.
             env.put("DRIVER_PATH", "");
             env.put("VK_ICD_FILENAMES", "");
             env.put("VK_DRIVER_FILES", "");
@@ -308,15 +341,11 @@ public final class DriverPluginManager {
     }
 
     private static void applyTurnipDriverEnvironment(
-            @NonNull Context context,
-            @NonNull LinkedHashMap<String, String> env,
-            @NonNull Driver driver
-    ) {
+            @NonNull Context context, @NonNull LinkedHashMap<String, String> env, @NonNull Driver driver) {
         File nativeDir = driver.getNativeLibraryDir();
         if (nativeDir != null && nativeDir.isDirectory()) {
             env.put("DRIVER_PATH", nativeDir.getAbsolutePath());
         }
-
         File icd = buildIcdFile(context, driver);
         if (icd != null && icd.isFile()) {
             env.put("VK_ICD_FILENAMES", icd.getAbsolutePath());
@@ -328,12 +357,6 @@ public final class DriverPluginManager {
     }
 
     private static void applyZinkMesaEnvironment(@NonNull LinkedHashMap<String, String> env) {
-        // v57: Always make the Java environment match the known-good Vulkan Zink
-        // route. The latest Freedreno-alias log still had POJAV_RENDERER=vulkan_zink
-        // but POJAVEXEC_EGL was overwritten back to libEGL_mesa.so, which made
-        // LWJGL report "no OpenGL context current" even though OSMesaMakeCurrent
-        // succeeded. Keep these values set for every Zink launch, not just the
-        // legacy alias helper.
         env.put("POJAV_RENDERER", "vulkan_zink");
         env.put("POJAVEXEC_EGL", "libOSMesa_8.so");
         env.put("POJAV_EGL_LIBRARY", "libOSMesa_8.so");
@@ -347,8 +370,6 @@ public final class DriverPluginManager {
         env.put("LIBGL_OSMESA", "libOSMesa_8.so");
         env.put("DROIDBRIDGE_ZINK_V57_FORCE_OSMESA_EGL", "1");
         env.put("DROIDBRIDGE_ZINK_V61_CLEAN_ZINK", "1");
-
-        // Pojav/Zalith's OSMesa/Zink path expects these basic Mesa values.
         env.put("MESA_LOADER_DRIVER_OVERRIDE", "zink");
         env.put("GALLIUM_DRIVER", "zink");
         env.put("LIBGL_ES", "3");
@@ -377,15 +398,12 @@ public final class DriverPluginManager {
     private static File buildIcdFile(@NonNull Context context, @NonNull Driver driver) {
         File vulkan = driver.getVulkanLibrary();
         if (vulkan == null || !vulkan.isFile()) return null;
-
         File dir = new File(PathManager.DIR_CACHE, "vulkan_icd");
         if (!dir.exists() && !dir.mkdirs()) return null;
-
         String libraryPath = vulkan.getAbsolutePath();
         String safeName = (driver.getPackageName() != null ? driver.getPackageName() : driver.getName())
                 .replaceAll("[^A-Za-z0-9_.-]", "_");
         File icd = new File(dir, safeName + ".json");
-
         try {
             JSONObject root = new JSONObject();
             JSONObject icdObject = new JSONObject();
@@ -393,7 +411,6 @@ public final class DriverPluginManager {
             icdObject.put("api_version", "1.3.0");
             root.put("file_format_version", "1.0.0");
             root.put("ICD", icdObject);
-
             try (FileOutputStream outputStream = new FileOutputStream(icd, false)) {
                 outputStream.write(root.toString().getBytes(StandardCharsets.UTF_8));
             }
@@ -410,7 +427,6 @@ public final class DriverPluginManager {
             addDirIfValid(dirs, new File(context.getApplicationInfo().nativeLibraryDir));
         }
         if (PathManager.DIR_NATIVE_LIB != null) addDirIfValid(dirs, new File(PathManager.DIR_NATIVE_LIB));
-
         for (File dir : dirs) {
             File vulkan = findVulkanLibrary(dir);
             if (vulkan != null) {
@@ -426,15 +442,12 @@ public final class DriverPluginManager {
 
     private static void discoverInstalledDriverPlugins(@NonNull Context context) {
         PackageManager pm = context.getPackageManager();
-
         for (String packageName : KNOWN_DRIVER_PLUGIN_PACKAGES) {
             try {
                 PackageInfo info = getPackageInfo(pm, packageName);
                 if (info != null) parsePluginPackage(context, info);
-            } catch (Throwable ignored) {
-            }
+            } catch (Throwable ignored) {}
         }
-
         try {
             List<ApplicationInfo> apps;
             int flags = PackageManager.GET_META_DATA;
@@ -473,7 +486,6 @@ public final class DriverPluginManager {
         ApplicationInfo app = info.applicationInfo;
         if (app == null || app.packageName == null) return;
         if ((app.flags & ApplicationInfo.FLAG_SYSTEM) != 0) return;
-
         String lowerPackage = app.packageName.toLowerCase(Locale.ROOT);
         Bundle meta = app.metaData;
         boolean fclPlugin = meta != null && meta.getBoolean("fclPlugin", false);
@@ -482,17 +494,11 @@ public final class DriverPluginManager {
                 || lowerPackage.contains("turnip")
                 || lowerPackage.contains("freedreno")
                 || lowerPackage.contains("adreno");
-
         File nativeDir = app.nativeLibraryDir != null ? new File(app.nativeLibraryDir) : null;
         File vulkan = nativeDir != null ? findVulkanLibrary(nativeDir) : null;
-
-        // Only real Vulkan driver plugins belong in this dropdown. Do not show
-        // renderer plugins or generic FCL plugins unless a Turnip/Freedreno
-        // Vulkan library is actually present.
         if (vulkan == null) return;
         if (!fclPlugin && !packageLooksLikeDriver) return;
         if (nativeDir == null || !nativeDir.isDirectory()) return;
-
         String label = declaredDriver;
         if (label == null || label.trim().isEmpty()) {
             try {
@@ -502,7 +508,6 @@ public final class DriverPluginManager {
                 label = app.packageName;
             }
         }
-
         addDriver(new Driver(label, Driver.Type.TURNIP, app.packageName, nativeDir, vulkan));
     }
 
