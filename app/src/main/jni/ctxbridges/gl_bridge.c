@@ -10,6 +10,9 @@
  * DroidBridge modifications:
  * Copyright (c) 2026 DNA Mobile Applications.
  *
+ * NEXUS VK LAUNCHER modifications:
+ * Vulkan API mode (NEXUS_VK_MODE=1): complete EGL skip for VulkanMod support.
+ *
  * This file remains available under the terms of the GNU LGPLv3
  * unless the original file or bundled component states a different license.
  *
@@ -33,6 +36,7 @@
 
 //
 // Created by maks on 17.09.2022.
+// NEXUS VK LAUNCHER: Vulkan API mode EGL skip added.
 //
 
 static const char* g_LogTag = "GLBridge";
@@ -106,6 +110,24 @@ static bool env_enabled(const char* name) {
 static bool env_is(const char* name, const char* expected) {
     const char* value = getenv(name);
     return value != NULL && expected != NULL && strcmp(value, expected) == 0;
+}
+
+/**
+ * NEXUS VK LAUNCHER — Vulkan API mode check.
+ *
+ * When NEXUS_VK_MODE=1, EGL is completely bypassed:
+ *   - gl_init()         → returns true immediately (no EGL display)
+ *   - gl_init_context() → returns minimal bundle (no EGL context)
+ *   - gl_make_current() → sets native window, skips eglMakeCurrent
+ *   - gl_swap_surface() → stores native window, skips EGL surface
+ *   - gl_swap_buffers() → no-op (VulkanMod handles presentation)
+ *   - gl_swap_interval()→ no-op
+ *
+ * VulkanMod connects to the ANativeWindow via GLFW and drives
+ * the Vulkan swapchain directly through libvulkan.so.
+ */
+static bool is_nexus_vulkan_mode(void) {
+    return env_enabled("NEXUS_VK_MODE");
 }
 
 static bool should_force_desktop_gl(void) {
@@ -192,6 +214,19 @@ static bool try_initialize_display(EGLDisplay display, const char* label) {
 }
 
 bool gl_init() {
+    /* ── NEXUS VK LAUNCHER: Vulkan API mode ──────────────────────────────────
+     * When NEXUS_VK_MODE=1 (set by DriverPluginManager when the user enables
+     * "Modo Vulkan API" in the launcher UI), EGL is completely skipped.
+     * VulkanMod drives Vulkan directly through libvulkan.so; no EGL display,
+     * no EGL context, no EGL surface is needed or wanted.
+     * ─────────────────────────────────────────────────────────────────────── */
+    if (is_nexus_vulkan_mode()) {
+        gl_log(ANDROID_LOG_INFO,
+               "NEXUS VK LAUNCHER: NEXUS_VK_MODE=1 — EGL init SKIPPED (Vulkan API mode). "
+               "VulkanMod will connect to ANativeWindow via GLFW and drive Vulkan directly.");
+        return true;
+    }
+
     gl_log(ANDROID_LOG_INFO, "gl_init renderer=%s mesa=%s mesaMode=%s mesaDriver=%s POJAVEXEC_EGL=%s DROIDBRIDGE_MESA_EGL=%s",
            getenv("POJAV_RENDERER") ? getenv("POJAV_RENDERER") : "<null>",
            getenv("DROIDBRIDGE_MESA") ? getenv("DROIDBRIDGE_MESA") : "<null>",
@@ -251,6 +286,27 @@ static void gl4esi_get_display_dimensions(int* width, int* height) {
 }
 
 gl_render_window_t* gl_init_context(gl_render_window_t *share) {
+    /* ── NEXUS VK LAUNCHER: Vulkan API mode ──────────────────────────────────
+     * No EGL context is created. Return a minimal bundle with no context/surface
+     * so the calling code has a valid (non-NULL) bundle to track the window,
+     * but no EGL objects are allocated.
+     * ─────────────────────────────────────────────────────────────────────── */
+    if (is_nexus_vulkan_mode()) {
+        gl_log(ANDROID_LOG_INFO,
+               "NEXUS VK LAUNCHER: NEXUS_VK_MODE=1 — EGL context creation SKIPPED. "
+               "Returning minimal Vulkan-mode window bundle.");
+        gl_render_window_t* bundle = malloc(sizeof(gl_render_window_t));
+        if (bundle == NULL) {
+            gl_log(ANDROID_LOG_ERROR, "NEXUS VK LAUNCHER: malloc failed for Vulkan bundle");
+            return NULL;
+        }
+        memset(bundle, 0, sizeof(gl_render_window_t));
+        bundle->context = EGL_NO_CONTEXT;
+        bundle->surface = EGL_NO_SURFACE;
+        bundle->nativeSurface = NULL;
+        return bundle;
+    }
+
     if (g_EglDisplay == EGL_NO_DISPLAY) {
         gl_log(ANDROID_LOG_ERROR, "gl_init_context called without initialized EGL display");
         return NULL;
@@ -266,13 +322,6 @@ gl_render_window_t* gl_init_context(gl_render_window_t *share) {
     const bool desktop_gl = should_force_desktop_gl();
     const EGLint requested_renderable_type = desktop_gl ? EGL_OPENGL_BIT : EGL_OPENGL_ES2_BIT;
 
-    /*
-     * Mesa/Zink desktop GL must use an opaque RGBX Android window surface when
-     * possible. An RGBA window surface lets Minecraft's fragment alpha leak into
-     * Android composition and causes black/transparent sky/cloud/chunk artifacts.
-     * Prefer: RGBX + depth + stencil + desktop GL.
-     * Fallbacks are kept only so broken Mesa builds still fail gracefully.
-     */
     const EGLint egl_attributes_strict[] = {
             EGL_BLUE_SIZE, 8,
             EGL_GREEN_SIZE, 8,
@@ -594,6 +643,27 @@ gl_render_window_t* gl_init_context(gl_render_window_t *share) {
 }
 
 void gl_swap_surface(gl_render_window_t* bundle) {
+    /* ── NEXUS VK LAUNCHER: Vulkan API mode ──────────────────────────────────
+     * In Vulkan mode, just track the native window. No EGL surface is created.
+     * VulkanMod will retrieve the ANativeWindow via GLFW for its swapchain.
+     * ─────────────────────────────────────────────────────────────────────── */
+    if (is_nexus_vulkan_mode()) {
+        if (bundle->nativeSurface != NULL) {
+            ANativeWindow_release(bundle->nativeSurface);
+            bundle->nativeSurface = NULL;
+        }
+        if (bundle->newNativeSurface != NULL) {
+            gl_log(ANDROID_LOG_INFO,
+                   "NEXUS VK LAUNCHER: storing ANativeWindow=%p for VulkanMod (no EGL surface)",
+                   bundle->newNativeSurface);
+            bundle->nativeSurface = bundle->newNativeSurface;
+            bundle->newNativeSurface = NULL;
+            ANativeWindow_acquire(bundle->nativeSurface);
+        }
+        bundle->surface = EGL_NO_SURFACE;
+        return;
+    }
+
     if (bundle->nativeSurface != NULL)
         ANativeWindow_release(bundle->nativeSurface);
 
@@ -636,6 +706,26 @@ void gl_swap_surface(gl_render_window_t* bundle) {
 }
 
 void gl_make_current(gl_render_window_t* bundle) {
+    /* ── NEXUS VK LAUNCHER: Vulkan API mode ──────────────────────────────────
+     * No eglMakeCurrent call. Just track the bundle and set the main window
+     * so VulkanMod can retrieve the ANativeWindow via the GLFW/pojav layer.
+     * ─────────────────────────────────────────────────────────────────────── */
+    if (is_nexus_vulkan_mode()) {
+        if (bundle == NULL) {
+            currentBundle = NULL;
+            return;
+        }
+        if (pojav_environ->mainWindowBundle == NULL) {
+            pojav_environ->mainWindowBundle = (basic_render_window_t*)bundle;
+            gl_log(ANDROID_LOG_INFO,
+                   "NEXUS VK LAUNCHER: Main window bundle set to %p (Vulkan API mode — no eglMakeCurrent)",
+                   pojav_environ->mainWindowBundle);
+            pojav_environ->mainWindowBundle->newNativeSurface = pojav_environ->pojavWindow;
+            gl_swap_surface(bundle);
+        }
+        currentBundle = bundle;
+        return;
+    }
 
     if (bundle == NULL)
     {
@@ -674,6 +764,12 @@ void gl_make_current(gl_render_window_t* bundle) {
 }
 
 void gl_swap_buffers() {
+    /* ── NEXUS VK LAUNCHER: Vulkan API mode ──────────────────────────────────
+     * VulkanMod drives its own Vulkan swapchain (vkQueuePresentKHR).
+     * No eglSwapBuffers is needed or safe to call here.
+     * ─────────────────────────────────────────────────────────────────────── */
+    if (is_nexus_vulkan_mode()) return;
+
     if (currentBundle->state == STATE_RENDERER_NEW_WINDOW)
     {
         eglMakeCurrent_p(g_EglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
@@ -704,6 +800,12 @@ void gl_setup_window() {
 }
 
 void gl_swap_interval(int swapInterval) {
+    /* ── NEXUS VK LAUNCHER: Vulkan API mode ──────────────────────────────────
+     * VulkanMod controls its own presentation mode (mailbox/fifo).
+     * eglSwapInterval is irrelevant and must not be called.
+     * ─────────────────────────────────────────────────────────────────────── */
+    if (is_nexus_vulkan_mode()) return;
+
     if (pojav_environ->force_vsync) swapInterval = 1;
 
     eglSwapInterval_p(g_EglDisplay, swapInterval);
@@ -725,4 +827,3 @@ Java_org_lwjgl_opengl_PojavRendererInit_nativeInitGl4esInternals(JNIEnv *env, jc
 
 #undef GETSYM
 }
-
