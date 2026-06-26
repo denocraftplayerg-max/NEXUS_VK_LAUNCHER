@@ -39,6 +39,8 @@ public final class LauncherPreferences {
     private static final String KEY_FORCE_FULLSCREEN_MODE = "force_fullscreen_mode";
     private static final String KEY_AVOID_ROUNDED_DISPLAY_CORNERS = "avoid_rounded_display_corners";
     private static final String KEY_IGNORE_DISPLAY_CUTOUT = "ignore_display_cutout";
+    // NEXUS VK LAUNCHER: Modo Vulkan API puro (VulkanMod sem EGL)
+    private static final String KEY_NEXUS_VULKAN_API_MODE = "nexus_vulkan_api_mode";
 
     public static final int MIN_GAME_RESOLUTION_SCALE_PERCENT = 25;
     public static final int MAX_GAME_RESOLUTION_SCALE_PERCENT = 200;
@@ -222,6 +224,45 @@ public final class LauncherPreferences {
     }
 
     /**
+     * NEXUS VK LAUNCHER — Modo Vulkan API Puro.
+     *
+     * Quando ativado:
+     *   - EGL completamente desativado no gl_bridge.c (NEXUS_VK_MODE=1)
+     *   - glfwstub.initEgl=false forçado via JVM args
+     *   - Todos os renderers GL ficam ocultos na UI
+     *   - libvulkan.so do sistema disponibilizado diretamente
+     *   - ANativeWindow entregue limpo ao GLFW para VulkanMod
+     *
+     * O utilizador deve instalar o VulkanMod na pasta mods.
+     * Sem VulkanMod presente, o launcher mostra erro antes de lançar.
+     */
+    public static boolean isNexusVulkanApiMode(@NonNull Context context) {
+        return prefs(context).getBoolean(KEY_NEXUS_VULKAN_API_MODE, false);
+    }
+
+    public static void setNexusVulkanApiMode(@NonNull Context context, boolean enabled) {
+        // Desativar opções incompatíveis ao ativar o modo Vulkan API
+        SharedPreferences.Editor editor = prefs(context).edit()
+                .putBoolean(KEY_NEXUS_VULKAN_API_MODE, enabled);
+        if (enabled) {
+            // Vulkan API mode é incompatível com forçar OpenGL ES para MC 26+
+            editor.putBoolean(KEY_USE_OPENGL_FOR_MC_26_PLUS, false);
+            // Sistema Vulkan deve estar ativo no modo Vulkan API
+            editor.putBoolean(KEY_USE_SYSTEM_VULKAN_DRIVER, true);
+        }
+        boolean saved = editor.commit();
+        if (!saved) {
+            SharedPreferences.Editor fallback = prefs(context).edit()
+                    .putBoolean(KEY_NEXUS_VULKAN_API_MODE, enabled);
+            if (enabled) {
+                fallback.putBoolean(KEY_USE_OPENGL_FOR_MC_26_PLUS, false);
+                fallback.putBoolean(KEY_USE_SYSTEM_VULKAN_DRIVER, true);
+            }
+            fallback.apply();
+        }
+    }
+
+    /**
      * Shows a small read-only latest-log overlay on the left side of GameActivity.
      * Disabled by default so normal gameplay remains clean.
      */
@@ -302,13 +343,6 @@ public final class LauncherPreferences {
     public static void setGameResolutionScalePercent(@NonNull Context context, int percent) {
         int clamped = clampGameResolutionScalePercent(percent);
 
-        // GameActivity runs in the :game process while LauncherSettingsActivity runs in
-        // the default app process. A normal SharedPreferences.apply() write can leave
-        // the other process holding its old cached value, which is why the settings
-        // screen could keep snapping the slider back to 70% after the in-game dialog
-        // had already saved 100%. Keep this specific setting in a tiny dedicated
-        // multi-process file and commit it synchronously so both processes see the
-        // latest render scale before creating/resizing MinecraftGLSurface.
         boolean resolutionSaved = resolutionPrefs(context).edit()
                 .putInt(KEY_GAME_RESOLUTION_SCALE_PERCENT, clamped)
                 .commit();
