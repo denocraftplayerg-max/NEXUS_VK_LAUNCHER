@@ -36,14 +36,22 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install NDK
+      - name: Install NDK and CMake
         run: |
-          echo "Installing Android NDK..."
           sdkmanager "ndk;25.2.9519653" "cmake;3.22.1"
-          echo "NDK installed."
 
-      - name: Grant Gradle execute permissions
-        run: chmod +x gradlew
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.0-milestone-1'
+
+      - name: Ensure gradlew is executable
+        run: |
+          if [ ! -f gradlew ]; then
+            echo "gradlew not found — generating via 'gradle wrapper'"
+            gradle wrapper --gradle-distribution-url="https://services.gradle.org/distributions/gradle-9.0-milestone-1-bin.zip"
+          fi
+          chmod +x gradlew
 
       - name: Cache Gradle dependencies
         uses: actions/cache@v4
@@ -57,17 +65,11 @@ jobs:
 
       - name: Build Debug APK
         if: github.event.inputs.build_type != 'release'
-        run: |
-          echo "Building NEXUS VK LAUNCHER Debug APK..."
-          ./gradlew assembleDebug --stacktrace
-          echo "Build complete."
+        run: ./gradlew assembleDebug --stacktrace
 
       - name: Build Release APK (unsigned)
         if: github.event.inputs.build_type == 'release'
-        run: |
-          echo "Building NEXUS VK LAUNCHER Release APK (unsigned)..."
-          ./gradlew assembleRelease --stacktrace
-          echo "Build complete."
+        run: ./gradlew assembleRelease --stacktrace
 
       - name: Sign Release APK
         if: github.event.inputs.build_type == 'release' && env.KEYSTORE_BASE64 != ''
@@ -77,10 +79,8 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
         run: |
-          echo "Signing APK..."
           echo "$KEYSTORE_BASE64" | base64 -d > keystore.jks
           find . -name "*.apk" -path "*/release/*" ! -path "*/intermediates/*" | while read apk; do
-            echo "Signing: $apk"
             $ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools/ | sort -V | tail -1)/apksigner sign \
               --ks keystore.jks \
               --ks-key-alias "$KEY_ALIAS" \
@@ -90,15 +90,11 @@ jobs:
               "$apk"
           done
           rm -f keystore.jks
-          echo "Signing complete."
 
       - name: Collect APKs
         run: |
           mkdir -p nexus_vk_output
-          find . -name "*.apk" ! -path "*/intermediates/*" | while read f; do
-            cp "$f" nexus_vk_output/
-            echo "Collected: $(basename $f)"
-          done
+          find . -name "*.apk" ! -path "*/intermediates/*" -exec cp {} nexus_vk_output/ \;
           ls -lh nexus_vk_output/
 
       - name: Upload APK artifact
@@ -110,15 +106,17 @@ jobs:
           if-no-files-found: error
 
       - name: Build summary
+        if: always()
         run: |
-          echo "## NEXUS VK LAUNCHER — Build OK" >> $GITHUB_STEP_SUMMARY
+          echo "## NEXUS VK LAUNCHER — Build" >> $GITHUB_STEP_SUMMARY
           echo "| Campo | Valor |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Tipo | ${{ github.event.inputs.build_type || 'debug' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### APKs geradas" >> $GITHUB_STEP_SUMMARY
-          for f in nexus_vk_output/*.apk; do
-            [ -f "$f" ] && echo "- \`$(basename $f)\`" >> $GITHUB_STEP_SUMMARY
-          done
+          if [ -d nexus_vk_output ]; then
+            echo "### APKs" >> $GITHUB_STEP_SUMMARY
+            for f in nexus_vk_output/*.apk; do
+              [ -f "$f" ] && echo "- \`$(basename $f)\`" >> $GITHUB_STEP_SUMMARY
+            done
+          fi
