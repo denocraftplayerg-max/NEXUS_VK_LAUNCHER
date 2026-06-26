@@ -3,11 +3,8 @@
  * All rights reserved.
  *
  * This file is DroidBridge project code.
- * It is not part of Minecraft and does not grant rights to Minecraft,
- * Mojang, Microsoft, PojavLauncher, Zalith Launcher, or any third-party project.
- *
- * Files written entirely by DNA Mobile Applications are proprietary unless
- * a file header or separate license notice states otherwise.
+ * NEXUS VK LAUNCHER: getCompatibleRenderers() filters out GL-only renderers when
+ * isNexusVulkanApiMode() is true.
  */
 
 package ca.dnamobile.javalauncher.renderer;
@@ -102,6 +99,17 @@ public final class Renderers {
         return new ArrayList<>(RENDERERS.values());
     }
 
+    /**
+     * Returns the list of renderers compatible with the current device and launch mode.
+     *
+     * NEXUS VK LAUNCHER — Vulkan API mode filtering:
+     * When {@link LauncherPreferences#isNexusVulkanApiMode(Context)} is true, all OpenGL-only
+     * renderers (GL4ES, VirGL, Krypton, Panfrost, Mesa KGSL, and third-party GL plugins) are
+     * hidden from the UI. Only Vulkan-capable renderers remain visible.
+     *
+     * VulkanMod renders through Vulkan directly (libvulkan.so) and does not use the
+     * launcher-side OpenGL bridge, so GL renderer plugins are irrelevant in this mode.
+     */
     @NonNull
     public static synchronized List<RendererInterface> getCompatibleRenderers(@NonNull Context context) {
         init(context, false);
@@ -109,9 +117,31 @@ public final class Renderers {
         boolean hasVulkan = hasVulkan(context);
         boolean hasZinkBinary = !(Architecture.getDeviceArchitecture() == Architecture.ARCH_X86);
 
+        // NEXUS VK LAUNCHER: when Vulkan API mode is active, only Vulkan-capable renderers
+        // are shown. GL-only renderers (GL4ES, VirGL, Krypton, Panfrost, Mesa KGSL, etc.)
+        // are irrelevant because VulkanMod drives Vulkan directly via libvulkan.so.
+        boolean nexusVulkanMode = LauncherPreferences.isNexusVulkanApiMode(context);
+
         for (RendererInterface renderer : RENDERERS.values()) {
             String rendererId = renderer.getRendererId().toLowerCase(Locale.ROOT);
             String uniqueId = renderer.getUniqueIdentifier().toLowerCase(Locale.ROOT);
+            String rendererName = renderer.getRendererName().toLowerCase(Locale.ROOT);
+
+            // --- NEXUS VK LAUNCHER: filter GL-only renderers in Vulkan API mode ---
+            if (nexusVulkanMode) {
+                boolean isVulkanCapable = rendererId.contains("vulkan")
+                        || rendererId.contains("zink")
+                        || uniqueId.contains("vulkan")
+                        || uniqueId.contains("zink")
+                        || rendererName.contains("vulkan")
+                        || rendererName.contains("zink");
+                if (!isVulkanCapable) {
+                    Logging.i(TAG, "NEXUS VK MODE: hiding GL renderer: " + renderer.getRendererName());
+                    continue;
+                }
+            }
+
+            // --- Standard hardware capability filters ---
             if ((rendererId.contains("vulkan") || rendererId.contains("zink") || uniqueId.contains("zink")) && !hasVulkan) {
                 continue;
             }
